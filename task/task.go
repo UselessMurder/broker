@@ -7,9 +7,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
-	"strconv"
 )
 
 const (
@@ -21,20 +21,20 @@ const (
 )
 
 type stream struct {
-	parent_id   uint64
-	id          uint64
+	parent_id    uint64
+	id           uint64
 	message_size uint64
-	cache       *goque.Queue
-	inSock      *net.UnixListener
-	outSock     *net.UnixConn
-	inSockPath  string
-	outSockPath string
-	state       uint32
-	breakch     chan struct{}
+	cache        *goque.Queue
+	inSock       *net.UnixListener
+	outSock      *net.UnixConn
+	inSockPath   string
+	outSockPath  string
+	state        uint32
+	breakch      chan struct{}
 	donech       chan struct{}
-	errstream   chan error
-	datastream  chan *[]byte
-	err         error
+	errstream    chan error
+	datastream   chan *[]byte
+	err          error
 }
 
 func (s *stream) done() {
@@ -50,13 +50,13 @@ func (s *stream) fail(err error) {
 }
 
 func (s *stream) breakStream() {
-	if s.state & s_break != s_break {
+	if s.state&s_break != s_break {
 		s.breakch <- struct{}{}
 	}
 }
 
 func (s *stream) waitStream() {
-	for s.state & s_closed != s_closed {
+	for s.state&s_closed != s_closed {
 		time.Sleep(100 * time.Microsecond)
 	}
 }
@@ -157,7 +157,7 @@ func (s *stream) reader(wg *sync.WaitGroup) {
 			s.fail(errors.New("Error while reading data from " + s.inSockPath + ": " + err.Error()))
 			return
 		}
-		if (count != 0) {
+		if count != 0 {
 			data = data[:count]
 			s.write(&data)
 		}
@@ -172,7 +172,7 @@ func (s *stream) writer(wg *sync.WaitGroup) {
 		select {
 		case data := <-s.datastream:
 			for {
-				if s.state & s_break == s_break {
+				if s.state&s_break == s_break {
 					return
 				}
 				s.outSock.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -189,10 +189,10 @@ func (s *stream) writer(wg *sync.WaitGroup) {
 				break
 			}
 		default:
-			if s.state & s_break == s_break {
+			if s.state&s_break == s_break {
 				return
 			}
-			if s.state & s_done == s_done {
+			if s.state&s_done == s_done {
 				s.breakStream()
 			}
 			time.Sleep(5 * time.Millisecond)
@@ -263,20 +263,20 @@ func createStream(inSocketPath string, outSocketPath string, cacheDir string, li
 		return nil, err
 	}
 	s := &stream{
-		parent_id:   pId,
-		id:          cId,
+		parent_id:    pId,
+		id:           cId,
 		message_size: message_size,
-		cache:       pQ,
-		inSock:      iS,
-		outSock:     oS,
-		inSockPath:  inSocketPath,
-		outSockPath: outSocketPath,
-		state:       0,
-		datastream:  make(chan *[]byte, limit_queue),
-		breakch:     make(chan struct{}, 10),
-		donech:        make(chan struct{}, 10),
-		errstream:   make(chan error, 10),
-		err:         nil,
+		cache:        pQ,
+		inSock:       iS,
+		outSock:      oS,
+		inSockPath:   inSocketPath,
+		outSockPath:  outSocketPath,
+		state:        0,
+		datastream:   make(chan *[]byte, limit_queue),
+		breakch:      make(chan struct{}, 10),
+		donech:       make(chan struct{}, 10),
+		errstream:    make(chan error, 10),
+		err:          nil,
 	}
 	go s.controller()
 	return s, nil
@@ -354,7 +354,7 @@ func (t *Task) Wait() {
 
 type TaskState struct {
 	Streams []*map[string]string
-	Task string
+	Task    string
 }
 
 func (t *Task) GetState() ([]*map[string]string, string) {

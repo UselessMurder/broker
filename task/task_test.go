@@ -1,18 +1,15 @@
 package task
 
-
-
 import (
-	"testing"
-	"net"
-	"math/rand"
-	"sync"
-	"io"
 	"bytes"
+	"io"
+	"math/rand"
+	"net"
 	"os"
 	"strconv"
+	"sync"
+	"testing"
 )
-
 
 func TestTaskState(t *testing.T) {
 	var targets [][]string
@@ -47,7 +44,7 @@ func TestTaskState(t *testing.T) {
 	if state != "breaked" {
 		t.Error("Try to break task failed")
 	}
-        task, err = CreateTask(targets, ".", 0, 50, 500)
+	task, err = CreateTask(targets, ".", 0, 50, 500)
 	for key, value := range targets {
 		(*listeners[key]).Close()
 		os.RemoveAll(value[1])
@@ -55,7 +52,7 @@ func TestTaskState(t *testing.T) {
 		if err != nil {
 			panic("Open sock " + err.Error())
 		}
-		_, err = conn.Write([]byte{1,2,3})
+		_, err = conn.Write([]byte{1, 2, 3})
 		if err != nil {
 			panic("Write sock " + err.Error())
 		}
@@ -78,13 +75,13 @@ func TestTaskState(t *testing.T) {
 		}
 		listeners = append(listeners, &l)
 	}
-        task, err = CreateTask(targets, ".", 0, 50, 500)
+	task, err = CreateTask(targets, ".", 0, 50, 500)
 	for _, value := range targets {
 		conn, err := net.Dial("unix", value[0])
 		if err != nil {
 			panic("Open sock " + err.Error())
 		}
-		_, err = conn.Write([]byte{1,2,3})
+		_, err = conn.Write([]byte{1, 2, 3})
 		if err != nil {
 			panic("Write sock " + err.Error())
 		}
@@ -172,4 +169,3 @@ func TestStreamIntegrity(t *testing.T) {
 		t.Error("Integrity test fail original data is corrupted")
 	}
 }
-

@@ -1,15 +1,14 @@
 package main
 
 import (
-	"testing"
+	"fmt"
+	"github.com/cloudfoundry/gosigar"
+	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
-	"io/ioutil"
 	"strconv"
-	"github.com/cloudfoundry/gosigar"
-	_"sync"
-	"math/rand"
-	"fmt"
+	"testing"
 )
 
 func TestRouter(t *testing.T) {
@@ -68,7 +67,6 @@ func TestConfig(t *testing.T) {
 	}
 }
 
-
 var config_str_mem = `CacheDir: /var/mem_broker_cache 
 Queue_limit: 4096
 Message_size: 5000
@@ -95,20 +93,20 @@ func TestMemUsage(t *testing.T) {
 		if err != nil {
 			panic("Remove socket /tmp/out.sock " + err.Error())
 		}
-		l, err := net.Listen("unix", "/tmp/out.sock" + strconv.Itoa(i))
+		l, err := net.Listen("unix", "/tmp/out.sock"+strconv.Itoa(i))
 		listners = append(listners, &l)
-		socks = append(socks, "tmp/out.sock" + strconv.Itoa(i))
+		socks = append(socks, "tmp/out.sock"+strconv.Itoa(i))
 		if err != nil {
 			panic("Init sock " + err.Error())
 		}
 		s := make([]string, 2)
 		s[0] = "/tmp/in.sock" + strconv.Itoa(i)
-		s[1] = "/tmp/out.sock"+ strconv.Itoa(i)
+		s[1] = "/tmp/out.sock" + strconv.Itoa(i)
 		var ss [][]string
 		ss = append(ss, s)
-		id , err := r.CreateTask(&ss)
+		id, err := r.CreateTask(&ss)
 		if err == nil {
-			c, err := net.Dial("unix", "/tmp/in.sock" + strconv.Itoa(i))
+			c, err := net.Dial("unix", "/tmp/in.sock"+strconv.Itoa(i))
 			if err != nil {
 				panic("Connect to sock error: " + err.Error())
 			}
@@ -124,12 +122,12 @@ func TestMemUsage(t *testing.T) {
 			c.Close()
 			mem := sigar.Mem{}
 			mem.Get()
-			fmt.Println("Total: ", mem.Total, "Limit with 50%: ", uint64(float64(mem.Total) * r.max_mem), " ", "Used: ", mem.Used)
+			fmt.Println("Total: ", mem.Total, "Limit with 50%: ", uint64(float64(mem.Total)*r.max_mem), " ", "Used: ", mem.Used)
 			ids = append(ids, id)
 		} else if err.Error() == "Not enough memory to create task" {
 			mem := sigar.Mem{}
 			mem.Get()
-			if uint64(float64(mem.Total) * 0.515) < mem.Used {
+			if uint64(float64(mem.Total)*0.515) < mem.Used {
 				t.Error("Incorrect memory usage!")
 			}
 			break
@@ -140,7 +138,7 @@ func TestMemUsage(t *testing.T) {
 	for _, val := range ids {
 		r.RemoveTask(val)
 	}
-	for _,val := range listners {
+	for _, val := range listners {
 		(*val).Close()
 	}
 	for _, val := range socks {

@@ -2,39 +2,39 @@ package main
 
 import (
 	"./task"
-	"log"
+	"errors"
+	"github.com/cloudfoundry/gosigar"
+	"github.com/labstack/echo"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
+	"log"
+	"net/http"
 	"os"
-	"github.com/cloudfoundry/gosigar"
-	"errors"
 )
-
-
 
 type feedback_msg struct {
 	payload interface{}
-	feed *chan interface{}
+	feed    *chan interface{}
 }
 
 type TaskRouter struct {
-	lastId uint64
-	cacheDir string
-	queue_limit uint64
+	lastId       uint64
+	cacheDir     string
+	queue_limit  uint64
 	message_size uint64
-	max_mem float64
-	tasks map[uint64] *task.Task
-	doneCh chan *feedback_msg
-	removeCh chan *feedback_msg
-	createCh chan *feedback_msg
-	stateCh chan *feedback_msg
+	max_mem      float64
+	tasks        map[uint64]*task.Task
+	doneCh       chan *feedback_msg
+	removeCh     chan *feedback_msg
+	createCh     chan *feedback_msg
+	stateCh      chan *feedback_msg
 }
 
 type Config struct {
-	CacheDir string `yaml:"CacheDir"`
-	Queue_limit uint64 `yaml:"Queue_limit"`
-	Message_size uint64 `yaml:"Message_size"`
-	Max_mem float64 `yaml:"Max_mem"`
+	CacheDir     string  `yaml:"CacheDir"`
+	Queue_limit  uint64  `yaml:"Queue_limit"`
+	Message_size uint64  `yaml:"Message_size"`
+	Max_mem      float64 `yaml:"Max_mem"`
 }
 
 func (c *Config) readConf(path string) {
@@ -59,12 +59,12 @@ func (tr *TaskRouter) runRouter() {
 		case msg := <-tr.createCh:
 			mem := sigar.Mem{}
 			mem.Get()
-			if uint64(float64(mem.Total) * tr.max_mem) < mem.Used {
+			if uint64(float64(mem.Total)*tr.max_mem) < mem.Used {
 				log.Println("Not enough memory to create task")
 				*msg.feed <- errors.New("Not enough memory to create task")
 				continue
 			}
-			ql := (uint64(float64(mem.Total) * tr.max_mem) - mem.Used) / (tr.message_size * uint64(len(*msg.payload.(*[][]string))))
+			ql := (uint64(float64(mem.Total)*tr.max_mem) - mem.Used) / (tr.message_size * uint64(len(*msg.payload.(*[][]string))))
 			if ql == 0 {
 				log.Println("Not enough memory to create task")
 				*msg.feed <- errors.New("Not enough memory to create task")
@@ -74,12 +74,12 @@ func (tr *TaskRouter) runRouter() {
 				ql = tr.queue_limit
 			}
 			var err error
-			tr.tasks[tr.lastId], err = task.CreateTask(*msg.payload.(*[][]string), tr.cacheDir, tr.lastId, ql,  tr.message_size)
+			tr.tasks[tr.lastId], err = task.CreateTask(*msg.payload.(*[][]string), tr.cacheDir, tr.lastId, ql, tr.message_size)
 			if err != nil {
 				log.Println("Error when trying to create task ", err)
 				*msg.feed <- err
 			} else {
-				*msg.feed <-tr.lastId
+				*msg.feed <- tr.lastId
 				tr.lastId++
 			}
 		case msg := <-tr.removeCh:
@@ -117,7 +117,7 @@ func (tr *TaskRouter) CreateTask(sockets *[][]string) (uint64, error) {
 	return 0, nil
 }
 
-func (tr *TaskRouter) RemoveTask(id uint64) (error) {
+func (tr *TaskRouter) RemoveTask(id uint64) error {
 	ch := make(chan interface{})
 	tr.removeCh <- &feedback_msg{payload: id, feed: &ch}
 	ans := <-ch
@@ -171,16 +171,16 @@ func NewRouter(configPath string) *TaskRouter {
 		log.Fatalln("Incorrect configuration parameters")
 	}
 	t := &TaskRouter{
-		lastId: 0,
-		cacheDir: conf.CacheDir,
-		queue_limit: conf.Queue_limit,
+		lastId:       0,
+		cacheDir:     conf.CacheDir,
+		queue_limit:  conf.Queue_limit,
 		message_size: conf.Message_size,
-		max_mem: conf.Max_mem,
-		tasks: make(map[uint64]*task.Task),
-		doneCh: make(chan *feedback_msg, 10),
-		createCh: make(chan *feedback_msg, 10),
-		removeCh: make(chan *feedback_msg, 10),
-		stateCh: make(chan *feedback_msg, 10),
+		max_mem:      conf.Max_mem,
+		tasks:        make(map[uint64]*task.Task),
+		doneCh:       make(chan *feedback_msg, 10),
+		createCh:     make(chan *feedback_msg, 10),
+		removeCh:     make(chan *feedback_msg, 10),
+		stateCh:      make(chan *feedback_msg, 10),
 	}
 	go t.runRouter()
 	return t
@@ -188,6 +188,70 @@ func NewRouter(configPath string) *TaskRouter {
 
 var router *TaskRouter
 
+type CreateStructIn struct {
+	Sockets [][]string `json:"Sockets"`
+}
+
+type CreateStructOut struct {
+	Id    uint64 `json:"Sockets"`
+	Error string `json:"Error"`
+}
+
+type DoByIdStruct struct {
+	Id uint64 `json:"Id"`
+}
+
+type StateStruct struct {
+	TaskState    string            `json:"TaskState"`
+	StreamStates map[string]string `json:"StreamStates"`
+	Error        string            `json:"Error"`
+}
+
+type DefaultResult struct {
+	Error string `json:"Error"`
+}
+
 func main() {
 	router = NewRouter(os.Args[1])
+	defer router.Done()
+	e := echo.New()
+	e.POST("/task", func(c echo.Context) error {
+		CSI := CreateStructIn{}
+		if err := c.Bind(CSI); err != nil {
+			return err
+		}
+		id, err := router.CreateTask(&CSI.Sockets)
+		if err != nil {
+			return c.JSON(http.StatusConflict, CreateStructOut{Id: id, Error: err.Error()})
+		}
+		return c.JSON(http.StatusCreated, CreateStructOut{Id: id})
+	})
+	e.DELETE("/task", func(c echo.Context) error {
+		DBIS := DoByIdStruct{}
+		if err := c.Bind(DBIS); err != nil {
+			return err
+		}
+		err := router.RemoveTask(DBIS.Id)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, DefaultResult{Error: err.Error()})
+		}
+		return c.JSON(http.StatusOK, DefaultResult{})
+	})
+	e.GET("/task", func(c echo.Context) error {
+		DBIS := DoByIdStruct{}
+		if err := c.Bind(DBIS); err != nil {
+			return err
+		}
+		state, err := router.GetState(DBIS.Id)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, StateStruct{Error: err.Error()})
+		}
+		ss := state.Streams
+		return c.JSON(http.StatusFound, StateStruct{TaskState: state.Task, StreamStates: ss})
+	})
+	e.DELETE("/self", func(c echo.Context) error {
+		router.Done()
+		os.Exit(0)
+		return nil
+	})
 }
