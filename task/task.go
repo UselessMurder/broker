@@ -21,37 +21,37 @@ const (
 )
 
 type stream struct {
-	parent_id    uint64
-	id           uint64
-	message_size uint64
-	cache        *goque.Queue
-	inSock       *net.UnixListener
-	outSock      *net.UnixConn
-	inSockPath   string
-	outSockPath  string
-	state        uint32
-	breakch      chan struct{}
-	donech       chan struct{}
-	errstream    chan error
-	datastream   chan *[]byte
-	err          error
+	parentId    uint64
+	id          uint64
+	messageSize uint64
+	cache       *goque.Queue
+	inSock      *net.UnixListener
+	outSock     *net.UnixConn
+	inSockPath  string
+	outSockPath string
+	state       uint32
+	breakCh     chan struct{}
+	doneCh      chan struct{}
+	errorCh     chan error
+	dataCh      chan *[]byte
+	err         error
 }
 
 func (s *stream) done() {
 	if s.state&s_done != s_done {
-		s.donech <- struct{}{}
+		s.doneCh <- struct{}{}
 	}
 }
 
 func (s *stream) fail(err error) {
 	if s.state&s_fail != s_fail {
-		s.errstream <- err
+		s.errorCh <- err
 	}
 }
 
 func (s *stream) breakStream() {
 	if s.state&s_break != s_break {
-		s.breakch <- struct{}{}
+		s.breakCh <- struct{}{}
 	}
 }
 
@@ -64,7 +64,7 @@ func (s *stream) waitStream() {
 func (s *stream) write(data *[]byte) {
 	if s.cache.Length() == 0 {
 		select {
-		case s.datastream <- data:
+		case s.dataCh <- data:
 		default:
 			_, err := s.cache.Enqueue(*data)
 			if err != nil {
@@ -74,14 +74,14 @@ func (s *stream) write(data *[]byte) {
 		}
 	} else {
 		s.cache.Enqueue(*data)
-		for len(s.datastream) != cap(s.datastream) && s.cache.Length() != 0 {
+		for len(s.dataCh) != cap(s.dataCh) && s.cache.Length() != 0 {
 			item, err := s.cache.Dequeue()
 			if err != nil {
 				s.fail(errors.New("Error while reading data from cache: " + err.Error()))
 				return
 			}
 			select {
-			case s.datastream <- &item.Value:
+			case s.dataCh <- &item.Value:
 			default:
 				s.fail(errors.New("Error more one writets per stream"))
 				return
@@ -100,7 +100,7 @@ func (s *stream) flush() bool {
 		flushed := false
 		for !flushed {
 			select {
-			case s.datastream <- &item.Value:
+			case s.dataCh <- &item.Value:
 				flushed = true
 			default:
 				if s.state&s_break == s_break {
@@ -141,12 +141,12 @@ func (s *stream) reader(wg *sync.WaitGroup) {
 			return
 		}
 		count := 0
-		data := make([]byte, s.message_size)
+		data := make([]byte, s.messageSize)
 		sock.SetReadDeadline(time.Now().Add(5 * time.Second))
 		if count, err = sock.Read(data); err == io.EOF {
 			if s.flush() {
 				s.done()
-				log.Println("Connection ", s.inSockPath, " closed")
+				log.Println("Connection ", s.inSockPath, " is closed on the other side")
 			}
 			return
 		} else if err, ok := err.(net.Error); ok && err.Timeout() {
@@ -167,10 +167,10 @@ func (s *stream) reader(wg *sync.WaitGroup) {
 func (s *stream) writer(wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer s.outSock.Close()
-	defer os.Remove(s.inSockPath + "." + strconv.FormatUint(s.parent_id, 10) + "_" + strconv.FormatUint(s.id, 10))
+	defer os.Remove(s.inSockPath + "." + strconv.FormatUint(s.parentId, 10) + "_" + strconv.FormatUint(s.id, 10))
 	for {
 		select {
-		case data := <-s.datastream:
+		case data := <-s.dataCh:
 			for {
 				if s.state&s_break == s_break {
 					return
@@ -210,32 +210,33 @@ func (s *stream) controller() {
 Controller:
 	for {
 		select {
-		case <-s.donech:
+		case <-s.doneCh:
 			s.state = s.state &^ s_perform
 			s.state |= s_done
-		case err := <-s.errstream:
+		case err := <-s.errorCh:
 			s.err = err
 			s.state = s.state &^ s_perform
 			s.state |= s_fail
 			s.state |= s_break
 			log.Println(err)
 			break Controller
-		case <-s.breakch:
+		case <-s.breakCh:
 			s.state = s.state &^ s_perform
 			s.state |= s_break
 			break Controller
 		}
 	}
 	wg.Wait()
-	close(s.datastream)
-	close(s.errstream)
-	close(s.donech)
+	close(s.dataCh)
+	close(s.errorCh)
+	close(s.doneCh)
+	close(s.breakCh)
 	s.state |= s_closed
 }
 
-func createStream(inSocketPath string, outSocketPath string, cacheDir string, limit_queue, message_size, pId, cId uint64) (*stream, error) {
-	if limit_queue == 0 || message_size == 0 {
-		return nil, errors.New("Icorrect stream properties")
+func createStream(inSocketPath string, outSocketPath string, cacheDir string, limitQueue, messageSize, pId, cId uint64) (*stream, error) {
+	if limitQueue == 0 || messageSize == 0 {
+		return nil, errors.New("Incorrect stream properties")
 	}
 	err := os.RemoveAll(cacheDir + "/" + strconv.FormatUint(pId, 10) + "_" + strconv.FormatUint(cId, 10))
 	if err != nil {
@@ -263,20 +264,20 @@ func createStream(inSocketPath string, outSocketPath string, cacheDir string, li
 		return nil, err
 	}
 	s := &stream{
-		parent_id:    pId,
-		id:           cId,
-		message_size: message_size,
-		cache:        pQ,
-		inSock:       iS,
-		outSock:      oS,
-		inSockPath:   inSocketPath,
-		outSockPath:  outSocketPath,
-		state:        0,
-		datastream:   make(chan *[]byte, limit_queue),
-		breakch:      make(chan struct{}, 10),
-		donech:       make(chan struct{}, 10),
-		errstream:    make(chan error, 10),
-		err:          nil,
+		parentId:    pId,
+		id:          cId,
+		messageSize: messageSize,
+		cache:       pQ,
+		inSock:      iS,
+		outSock:     oS,
+		inSockPath:  inSocketPath,
+		outSockPath: outSocketPath,
+		state:       0,
+		dataCh:      make(chan *[]byte, limitQueue),
+		breakCh:     make(chan struct{}, 10),
+		doneCh:      make(chan struct{}, 10),
+		errorCh:     make(chan error, 10),
+		err:         nil,
 	}
 	go s.controller()
 	return s, nil
@@ -322,12 +323,12 @@ type Task struct {
 	streams []*stream
 }
 
-func CreateTask(sockets [][]string, cacheDir string, id, limit, message_size uint64) (*Task, error) {
+func CreateTask(sockets [][]string, cacheDir string, id, limitQueue, messageSize uint64) (*Task, error) {
 	sts := make([]*stream, len(sockets))
 	var cleanup []int
 	var err error
 	for i, socks := range sockets {
-		sts[i], err = createStream(socks[0], socks[1], cacheDir, limit, message_size, id, uint64(i))
+		sts[i], err = createStream(socks[0], socks[1], cacheDir, limitQueue, messageSize, id, uint64(i))
 		if err != nil {
 			for _, index := range cleanup {
 				sts[index].breakStream()
@@ -353,12 +354,12 @@ func (t *Task) Wait() {
 }
 
 type TaskState struct {
-	Streams []*map[string]string
+	Streams *[]map[string]string
 	Task    string
 }
 
-func (t *Task) GetState() ([]*map[string]string, string) {
-	var states []*map[string]string
+func (t *Task) GetState() (*[]map[string]string, string) {
+	var states []map[string]string
 	failed := false
 	breaked := false
 	count := 0
@@ -380,16 +381,16 @@ func (t *Task) GetState() ([]*map[string]string, string) {
 		state["id"] = strconv.FormatUint(st.GetId(), 10)
 		state["inSocket"] = st.GetInputSocketPath()
 		state["outSocket"] = st.GetOutputSocketPath()
-		states = append(states, &state)
+		states = append(states, state)
 	}
 	if count == len(states) {
-		return states, "finished"
+		return &states, "finished"
 	}
 	if failed {
-		return states, "failed"
+		return &states, "failed"
 	}
 	if breaked {
-		return states, "breaked"
+		return &states, "breaked"
 	}
-	return states, "performing"
+	return &states, "performing"
 }

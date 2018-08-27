@@ -23,17 +23,17 @@ func TestTaskState(t *testing.T) {
 	for _, value := range targets {
 		err := os.RemoveAll(value[1])
 		if err != nil {
-			panic("Remove socket " + value[1] + " " + err.Error())
+			panic("Error while trying remove socket " + value[1] + ": " + err.Error())
 		}
 		l, err := net.Listen("unix", value[1])
 		if err != nil {
-			panic("Init sock " + err.Error())
+			panic("Error while trying init sock " + value[1] + ": " + err.Error())
 		}
 		listeners = append(listeners, &l)
 	}
 	task, err := CreateTask(targets, ".", 0, 50, 500)
 	if err != nil {
-		panic("Init task error " + err.Error())
+		panic("Error while trying create task: " + err.Error())
 	}
 	_, state := task.GetState()
 	if state != "performing" {
@@ -42,7 +42,7 @@ func TestTaskState(t *testing.T) {
 	task.Close()
 	_, state = task.GetState()
 	if state != "breaked" {
-		t.Error("Try to break task failed")
+		t.Error("Try to abort task failed")
 	}
 	task, err = CreateTask(targets, ".", 0, 50, 500)
 	for key, value := range targets {
@@ -50,28 +50,28 @@ func TestTaskState(t *testing.T) {
 		os.RemoveAll(value[1])
 		conn, err := net.Dial("unix", value[0])
 		if err != nil {
-			panic("Open sock " + err.Error())
+			panic("Error while trying open socket " + value[0] + ": " + err.Error())
 		}
 		_, err = conn.Write([]byte{1, 2, 3})
 		if err != nil {
-			panic("Write sock " + err.Error())
+			panic("Error while trying write to socket " + value[0] + ": " + err.Error())
 		}
 		defer conn.Close()
 	}
 	task.Wait()
 	_, state = task.GetState()
 	if state != "failed" {
-		t.Error("Try to corrupt task failed")
+		t.Error("Try to break task failed")
 	}
 	listeners = listeners[:0]
 	for _, value := range targets {
 		err := os.RemoveAll(value[1])
 		if err != nil {
-			panic("Remove socket " + value[1] + " " + err.Error())
+			panic("Error while trying remove socket " + value[1] + ": " + err.Error())
 		}
 		l, err := net.Listen("unix", value[1])
 		if err != nil {
-			panic("Init sock " + err.Error())
+			panic("Error while trying init socket " + value[1] + ": " + err.Error())
 		}
 		listeners = append(listeners, &l)
 	}
@@ -79,11 +79,11 @@ func TestTaskState(t *testing.T) {
 	for _, value := range targets {
 		conn, err := net.Dial("unix", value[0])
 		if err != nil {
-			panic("Open sock " + err.Error())
+			panic("Error while trying open socket " + value[0] + ": " + err.Error())
 		}
 		_, err = conn.Write([]byte{1, 2, 3})
 		if err != nil {
-			panic("Write sock " + err.Error())
+			panic("Error while trying write to socket " + value[0] + ": " + err.Error())
 		}
 		conn.Close()
 	}
@@ -91,12 +91,12 @@ func TestTaskState(t *testing.T) {
 		defer (*value).Close()
 		sock, err := (*value).Accept()
 		if err != nil {
-			panic("Accept sock " + err.Error())
+			panic("Error while trying accept connection from socket: " + err.Error())
 		}
 		defer sock.Close()
 		data := make([]byte, 10)
 		if _, err := sock.Read(data); err != nil {
-			panic("Read sock " + err.Error())
+			panic("Error while trying read from accepted connection: " + err.Error())
 		}
 	}
 	task.Wait()
@@ -109,11 +109,11 @@ func TestTaskState(t *testing.T) {
 func TestStreamIntegrity(t *testing.T) {
 	err := os.RemoveAll("/tmp/out.sock")
 	if err != nil {
-		panic("Remove socket /tmp/out.sock " + err.Error())
+		panic("Error while trying remove socket /tmp/out.sock: " + err.Error())
 	}
 	l, err := net.Listen("unix", "/tmp/out.sock")
 	if err != nil {
-		panic("Init sock " + err.Error())
+		panic("Error while trying listen socket /tmp/out.sock: " + err.Error())
 	}
 	defer l.Close()
 	defer os.Remove("/tmp/out.sock")
@@ -126,13 +126,13 @@ func TestStreamIntegrity(t *testing.T) {
 		defer wg.Done()
 		sock, err = l.Accept()
 		if err != nil {
-			panic("Accept sock " + err.Error())
+			panic("Error while trying accept connection from socket /tmp/out.sock:" + err.Error())
 		}
 	}(&wg)
-	message_size := 49152
-	_, err = createStream("/tmp/in.sock", "/tmp/out.sock", ".", 1066, uint64(message_size), 0, 0)
+	messageSize := 49152
+	_, err = createStream("/tmp/in.sock", "/tmp/out.sock", ".", 1066, uint64(messageSize), 0, 0)
 	if err != nil {
-		panic("Create stream " + err.Error())
+		panic("Error while trying create stream: " + err.Error())
 	}
 	wg.Wait()
 	defer sock.Close()
@@ -143,13 +143,13 @@ func TestStreamIntegrity(t *testing.T) {
 		defer wg.Done()
 		next := true
 		for next {
-			data := make([]byte, message_size)
+			data := make([]byte, messageSize)
 			count, err := sock.Read(data)
 			if err != nil {
 				if err == io.EOF {
 					next = false
 				} else {
-					panic("Read error " + err.Error())
+					panic("Error while trying read from accepted socket: " + err.Error())
 				}
 			}
 			recv_data = append(recv_data, data[:count]...)
@@ -157,11 +157,11 @@ func TestStreamIntegrity(t *testing.T) {
 	}(&wg)
 	c, err := net.Dial("unix", "/tmp/in.sock")
 	if err != nil {
-		panic("Open sock " + err.Error())
+		panic("Error while trying connect to socket /tmp/in.sock: " + err.Error())
 	}
 	_, err = c.Write(original_data)
 	if err != nil {
-		panic("Write error " + err.Error())
+		panic("Error while write to socket /tmp/in.sock: " + err.Error())
 	}
 	c.Close()
 	wg.Wait()
