@@ -18,6 +18,8 @@ const (
 	s_fail    = 4
 	s_perform = 8
 	s_closed  = 16
+	e_reader_done = 1
+	e_break = 2
 )
 
 type stream struct {
@@ -30,8 +32,11 @@ type stream struct {
 	inSockPath  string
 	outSockPath string
 	state       uint32
+	exitCh      chan struct{}
 	breakCh     chan struct{}
 	doneCh      chan struct{}
+	readerCh    chan struct{}
+	writerCh    chan int
 	errorCh     chan error
 	dataCh      chan *[]byte
 	err         error
@@ -61,7 +66,7 @@ func (s *stream) waitStream() {
 	}
 }
 
-func (s *stream) write(data *[]byte) {
+func (s *stream) store(data *[]byte) {
 	if s.cache.Length() == 0 {
 		select {
 		case s.dataCh <- data:
@@ -102,11 +107,8 @@ func (s *stream) flush() bool {
 			select {
 			case s.dataCh <- &item.Value:
 				flushed = true
-			default:
-				if s.state&s_break == s_break {
-					return false
-				}
-				time.Sleep(5 * time.Millisecond)
+			case <- s.readerCh:
+				return false
 			}
 		}
 	}
@@ -159,9 +161,30 @@ func (s *stream) reader(wg *sync.WaitGroup) {
 		}
 		if count != 0 {
 			data = data[:count]
-			s.write(&data)
+			s.store(&data)
 		}
 	}
+}
+
+func (s *stream) write(data *[]byte) bool {
+	for {
+		if s.state&s_break == s_break {
+			return false
+		}
+		s.outSock.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		count, err := s.outSock.Write(*data)
+		if err, ok := err.(net.Error); ok && err.Timeout() {
+			if count != 0 {
+				(*data) = (*data)[count:]
+			}
+			continue
+		} else if err != nil {
+			s.fail(errors.New("Error while writing data to " + s.outSockPath + ": " + err.Error()))
+			return false
+		}
+		break
+	}
+	return true
 }
 
 func (s *stream) writer(wg *sync.WaitGroup) {
@@ -171,31 +194,17 @@ func (s *stream) writer(wg *sync.WaitGroup) {
 	for {
 		select {
 		case data := <-s.dataCh:
-			for {
-				if s.state&s_break == s_break {
-					return
-				}
-				s.outSock.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				count, err := s.outSock.Write(*data)
-				if err, ok := err.(net.Error); ok && err.Timeout() {
-					if count != 0 {
-						(*data) = (*data)[count:]
-					}
-					continue
-				} else if err != nil {
-					s.fail(errors.New("Error while writing data to " + s.outSockPath + ": " + err.Error()))
-					return
-				}
-				break
-			}
-		default:
-			if s.state&s_break == s_break {
+			s.write(data)
+		case event := <-s.writerCh:
+			if event == e_break {
 				return
 			}
-			if s.state&s_done == s_done {
-				s.breakStream()
+			if event == e_reader_done {
+				for len(s.dataCh) != 0 {
+					s.write(<-s.dataCh)
+				}
+				return
 			}
-			time.Sleep(5 * time.Millisecond)
 		}
 	}
 }
@@ -213,6 +222,8 @@ Controller:
 		case <-s.doneCh:
 			s.state = s.state &^ s_perform
 			s.state |= s_done
+			s.writerCh <- e_reader_done
+			break Controller
 		case err := <-s.errorCh:
 			s.err = err
 			s.state = s.state &^ s_perform
@@ -223,6 +234,8 @@ Controller:
 		case <-s.breakCh:
 			s.state = s.state &^ s_perform
 			s.state |= s_break
+			s.readerCh <- struct{}{}
+			s.writerCh <- e_break
 			break Controller
 		}
 	}
@@ -231,6 +244,8 @@ Controller:
 	close(s.errorCh)
 	close(s.doneCh)
 	close(s.breakCh)
+	close(s.writerCh)
+	close(s.readerCh)
 	s.state |= s_closed
 }
 
@@ -277,6 +292,8 @@ func createStream(inSocketPath string, outSocketPath string, cacheDir string, li
 		breakCh:     make(chan struct{}, 10),
 		doneCh:      make(chan struct{}, 10),
 		errorCh:     make(chan error, 10),
+		writerCh:     make(chan int, 10),
+		readerCh:    make(chan struct{}, 10),
 		err:         nil,
 	}
 	go s.controller()
